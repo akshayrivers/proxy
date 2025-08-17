@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+rustls = "0.21"   
+webpki = "0.22"
+native-tls = "0.2"

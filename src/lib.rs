@@ -1,5 +1,3 @@
-use std::io;
-
 // proxy client :
 // 1.Negotiation 2. TCP requests and responses 3. udp support(later)
 
@@ -81,20 +79,20 @@ use std::io;
 // +----+-----+-------+------+----------+----------+
 // | 1  |  1  | X'00' |  1   | Variable |    2     |
 // +----+-----+-------+------+----------+----------+
-
+#[derive(Debug)]
 pub enum Address {
     IPv4([u8; 4]),
     Domain(String),
     IPv6([u8; 16]),
 }
-
+#[derive(Debug)]
 pub struct Request {
-    ver: u8,
-    cmd: u8,
-    rsv: u8,
-    atyp: u8,
-    dst_addr: Address,
-    dst_port: u16,
+    pub ver: u8,
+    pub cmd: u8,
+    pub rsv: u8,
+    pub atyp: u8,
+    pub dst_addr: Address,
+    pub dst_port: u16,
 }
 
 // +----+-----+-------+------+----------+----------+
@@ -102,14 +100,14 @@ pub struct Request {
 // +----+-----+-------+------+----------+----------+
 // | 1  |  1  | X'00' |  1   | Variable |    2     |
 // +----+-----+-------+------+----------+----------+
-
+#[derive(Debug)]
 pub struct Response {
-    ver: u8,
-    rep: u8,
-    rsv: u8,
-    atyp: u8,
-    bnd_addr: Address,
-    bnd_port: u16,
+    pub ver: u8,
+    pub rep: u8,
+    pub rsv: u8,
+    pub atyp: u8,
+    pub bnd_addr: Address,
+    pub bnd_port: u16,
 }
 
 impl Address {
