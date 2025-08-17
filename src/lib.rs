@@ -82,13 +82,13 @@ use std::io;
 // | 1  |  1  | X'00' |  1   | Variable |    2     |
 // +----+-----+-------+------+----------+----------+
 
-enum Address {
+pub enum Address {
     IPv4([u8; 4]),
     Domain(String),
     IPv6([u8; 16]),
 }
 
-struct Request {
+pub struct Request {
     ver: u8,
     cmd: u8,
     rsv: u8,
@@ -103,11 +103,215 @@ struct Request {
 // | 1  |  1  | X'00' |  1   | Variable |    2     |
 // +----+-----+-------+------+----------+----------+
 
-struct Response {
+pub struct Response {
     ver: u8,
     rep: u8,
     rsv: u8,
     atyp: u8,
     bnd_addr: Address,
     bnd_port: u16,
+}
+
+impl Address {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Address::IPv4(addr) => {
+                let mut bytes = vec![0x01]; // IPV4
+                bytes.extend_from_slice(addr);
+                bytes
+            }
+            Address::Domain(domain) => {
+                let mut bytes = vec![0x03]; //Domain
+                bytes.push(domain.len() as u8);
+                bytes.extend_from_slice(domain.as_bytes());
+                bytes
+            }
+            Address::IPv6(addr) => {
+                let mut bytes = vec![0x04]; //IPV6
+                bytes.extend_from_slice(addr);
+                bytes
+            }
+        }
+    }
+}
+impl Request {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.push(self.ver);
+        buf.push(self.cmd);
+        buf.push(self.rsv);
+
+        let mut addr_bytes = self.dst_addr.to_bytes();
+        buf.append(&mut addr_bytes);
+        buf.extend_from_slice(&self.dst_port.to_be_bytes());
+        buf
+    }
+}
+impl Response {
+    pub fn from_bytes(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 4 {
+            return None;
+        }
+        let ver = buf[0];
+        let rep = buf[1];
+        let rsv = buf[2];
+        let atyp = buf[3];
+        let (bnd_addr, offset) = match atyp {
+            0x01 => {
+                if buf.len() < 10 {
+                    return None;
+                }
+                let mut ipv4 = [0u8; 4];
+                ipv4.copy_from_slice(&buf[4..8]);
+                (Address::IPv4(ipv4), 8)
+            }
+            0x03 => {
+                let len = buf[4] as usize;
+                if buf.len() < 5 + len + 2 {
+                    return None;
+                }
+                let domain = String::from_utf8_lossy(&buf[5..5 + len]).to_string();
+                (Address::Domain(domain), 5 + len)
+            }
+            0x04 => {
+                if buf.len() < 22 {
+                    return None;
+                }
+                let mut ipv6 = [0u8; 16];
+                ipv6.copy_from_slice(&buf[4..20]);
+                (Address::IPv6(ipv6), 20)
+            }
+            _ => return None,
+        };
+        let bnd_port = u16::from_be_bytes([buf[offset], buf[offset + 1]]);
+        Some(Response {
+            ver,
+            rep,
+            rsv,
+            atyp,
+            bnd_addr,
+            bnd_port,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ipv4_address_to_bytes() {
+        let addr = Address::IPv4([127, 0, 0, 1]);
+        let bytes = addr.to_bytes();
+        assert_eq!(bytes, vec![0x01, 127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_domain_address_to_bytes() {
+        let addr = Address::Domain("example.com".to_string());
+        let bytes = addr.to_bytes();
+        let mut expected = vec![0x03, 11]; // type + length
+        expected.extend_from_slice(b"example.com");
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn test_ipv6_address_to_bytes() {
+        let addr = Address::IPv6([0u8; 16]);
+        let bytes = addr.to_bytes();
+        let mut expected = vec![0x04];
+        expected.extend_from_slice(&[0u8; 16]);
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn test_request_to_bytes_ipv4() {
+        let req = Request {
+            ver: 5,
+            cmd: 1,
+            rsv: 0,
+            atyp: 0x01,
+            dst_addr: Address::IPv4([127, 0, 0, 1]),
+            dst_port: 8080,
+        };
+
+        let bytes = req.to_bytes();
+        // Expected: VER, CMD, RSV, ATYP + ADDR + PORT
+        let mut expected = vec![5, 1, 0, 0x01, 127, 0, 0, 1];
+        expected.extend_from_slice(&8080u16.to_be_bytes());
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn test_request_to_bytes_domain() {
+        let req = Request {
+            ver: 5,
+            cmd: 1,
+            rsv: 0,
+            atyp: 0x03,
+            dst_addr: Address::Domain("example.com".to_string()),
+            dst_port: 80,
+        };
+
+        let bytes = req.to_bytes();
+        // Expected: VER, CMD, RSV, ATYP + LEN + "example.com" + PORT
+        let mut expected = vec![5, 1, 0, 0x03, 11];
+        expected.extend_from_slice(b"example.com");
+        expected.extend_from_slice(&80u16.to_be_bytes());
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn test_response_from_bytes_ipv4() {
+        let buf = vec![
+            0x05, 0x00, 0x00, 0x01, // VER, REP, RSV, ATYP (IPv4)
+            127, 0, 0, 1, // BND.ADDR
+            0x1F, 0x90, // BND.PORT = 8080
+        ];
+
+        let resp = Response::from_bytes(&buf).unwrap();
+        assert_eq!(resp.ver, 5);
+        assert_eq!(resp.rep, 0);
+        assert_eq!(resp.rsv, 0);
+        assert_eq!(resp.atyp, 1);
+        match resp.bnd_addr {
+            Address::IPv4(addr) => assert_eq!(addr, [127, 0, 0, 1]),
+            _ => panic!("Expected IPv4"),
+        }
+        assert_eq!(resp.bnd_port, 8080);
+    }
+
+    #[test]
+    fn test_response_from_bytes_domain() {
+        let mut buf = vec![0x05, 0x00, 0x00, 0x03, 11]; // VER, REP, RSV, ATYP, LEN
+        buf.extend_from_slice(b"example.com");
+        buf.extend_from_slice(&80u16.to_be_bytes());
+
+        let resp = Response::from_bytes(&buf).unwrap();
+        assert_eq!(resp.ver, 5);
+        assert_eq!(resp.rep, 0);
+        assert_eq!(resp.atyp, 3);
+        match resp.bnd_addr {
+            Address::Domain(d) => assert_eq!(d, "example.com"),
+            _ => panic!("Expected Domain"),
+        }
+        assert_eq!(resp.bnd_port, 80);
+    }
+
+    #[test]
+    fn test_response_from_bytes_ipv6() {
+        let mut buf = vec![0x05, 0x00, 0x00, 0x04]; // VER, REP, RSV, ATYP (IPv6)
+        buf.extend_from_slice(&[0u8; 16]); // BND.ADDR
+        buf.extend_from_slice(&443u16.to_be_bytes());
+
+        let resp = Response::from_bytes(&buf).unwrap();
+        assert_eq!(resp.ver, 5);
+        assert_eq!(resp.rep, 0);
+        assert_eq!(resp.atyp, 4);
+        match resp.bnd_addr {
+            Address::IPv6(addr) => assert_eq!(addr, [0u8; 16]),
+            _ => panic!("Expected IPv6"),
+        }
+        assert_eq!(resp.bnd_port, 443);
+    }
 }
